@@ -1,5 +1,6 @@
 # Env
-.env
+scripts/.env
+!scripts/.env.example
 
 # Outputs
 output/
