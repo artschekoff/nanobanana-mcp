@@ -1,4 +1,4 @@
 interface:
   display_name: "NanoBanana MCP"
   short_description: "Generate social visuals via Nano Banana MCP"
-  default_prompt: "Use $nanobanana-mcp to generate a social image from appsec-imager style and a platform-specific prompt."
+  default_prompt: "Use $nanobanana-mcp to generate social images immediately with explicit style and platform-specific prompts. Prefer a single non-interactive run; use generate_visual_batch for parallel jobs."

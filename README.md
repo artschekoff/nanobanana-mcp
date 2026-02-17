@@ -11,20 +11,20 @@ Minimal MCP server that bridges to the Kie AI Nano Banana image API. It creates 
 - Creates image generation tasks via Kie AI
 - Polls task status until completion (or returns a task id for async flows)
 - Downloads the resulting image and writes it to disk
-- Supports an AppSec-specific helper that loads style from `AGENTS.md`
+- Supports parallel batch generation with explicit style/prompt per item
 
 ## Quick Start
 1. Add your API key to `.env` (or use `.env.example` as a template).
-2. On the first run, install dependencies from `skills/nanobanana-mcp/scripts/requirements.txt`:
+2. Run one command to install dependencies and start the server:
 
 ```bash
-python3 -m pip install -r skills/nanobanana-mcp/scripts/requirements.txt
+cd <PROJECT_FOLDER> && python3 -m pip install -r scripts/requirements.txt && python3 scripts/server.py
 ```
 
-3. Start the server with system `python3` (ignore `.venv`):
+3. For later runs, start with:
 
 ```bash
-python3 skills/nanobanana-mcp/scripts/server.py
+cd <PROJECT_FOLDER> && python3 scripts/server.py
 ```
 
 ## Environment Variables
@@ -40,7 +40,9 @@ Optional:
 - `NANOBANANA_POLL_INTERVAL_SECONDS` (default `3`)
 - `NANOBANANA_POLL_TIMEOUT_SECONDS` (default `300`)
 - `NANOBANANA_OUTPUT_DIR` (default `skills/nanobanana-mcp/output`)
-- `NANOBANANA_AGENTS_FILE` (default `AGENTS.md`)
+- `NANOBANANA_HTTP_RETRIES` (default `3`)
+- `NANOBANANA_HTTP_RETRY_BACKOFF_SECONDS` (default `1.5`)
+- `NANOBANANA_LOG_FILE` (optional; if set, writes JSONL diagnostics)
 
 See `.env.example` for a full template.
 
@@ -49,7 +51,7 @@ See `.env.example` for a full template.
 - `create_visual_task` — Creates a task and returns `task_id`.
 - `get_visual_task` — Fetches task status by `task_id`.
 - `generate_visual` — Creates a task and waits for the resulting image.
-- `generate_visual_from_appsec_imager` — Loads style from `AGENTS.md` role `appsec-imager`.
+- `generate_visual_batch` — Runs multiple generations in parallel (`items[]`, `default_style`, `max_workers`, per-item outputs/errors).
 
 ## Notes
 - The server reads `.env` from the project root or from `skills/nanobanana-mcp/.env`.

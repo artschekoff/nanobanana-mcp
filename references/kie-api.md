@@ -30,8 +30,8 @@
 - `NANOBANANA_POLL_INTERVAL_SECONDS` default `3`.
 - `NANOBANANA_POLL_TIMEOUT_SECONDS` default `300`.
 - `NANOBANANA_OUTPUT_DIR` default `skills/nanobanana-mcp/output`.
-- `NANOBANANA_AGENTS_FILE` default `AGENTS.md`.
 
 ## Notes
-- `generate_visual_from_appsec_imager` auto-loads style from role `appsec-imager` in `AGENTS.md`.
+- Use `generate_visual` with explicit `style` and `prompt`.
+- Use `generate_visual_batch` for parallel multi-image generation.
 - If API response shape changes, update field extractors in `scripts/server.py`.

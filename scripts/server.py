@@ -17,14 +17,18 @@ import re
 import time
 import urllib.error
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
+from uuid import uuid4
 
 try:
     from dotenv import load_dotenv
 except ImportError as exc:
-    raise SystemExit("Missing dependency 'python-dotenv'. Install with: pip install python-dotenv") from exc
+    raise SystemExit(
+        "Missing dependency 'python-dotenv'. Install with: pip install python-dotenv"
+    ) from exc
 
 try:
     from mcp.server.fastmcp import FastMCP
@@ -43,15 +47,23 @@ def _load_dotenv() -> None:
 _load_dotenv()
 
 SERVER_NAME = "nanobanana-mcp"
-DEFAULT_BASE_URL = os.getenv("NANOBANANA_BASE_URL", "https://api.kie.ai/api/v1").rstrip("/")
+DEFAULT_BASE_URL = os.getenv("NANOBANANA_BASE_URL", "https://api.kie.ai/api/v1").rstrip(
+    "/"
+)
 DEFAULT_MODEL = os.getenv("NANOBANANA_MODEL", "nano-banana-pro")
 DEFAULT_TIMEOUT = int(os.getenv("NANOBANANA_TIMEOUT_SECONDS", "90"))
 DEFAULT_POLL_INTERVAL = float(os.getenv("NANOBANANA_POLL_INTERVAL_SECONDS", "3"))
 DEFAULT_POLL_TIMEOUT = int(os.getenv("NANOBANANA_POLL_TIMEOUT_SECONDS", "300"))
 DEFAULT_CREATE_TASK_PATH = os.getenv("NANOBANANA_CREATE_TASK_PATH", "/jobs/createTask")
 DEFAULT_GET_TASK_PATH = os.getenv("NANOBANANA_GET_TASK_PATH", "/jobs/recordInfo")
-DEFAULT_OUTPUT_DIR = Path(os.getenv("NANOBANANA_OUTPUT_DIR", "skills/nanobanana-mcp/output"))
-DEFAULT_AGENTS_FILE = os.getenv("NANOBANANA_AGENTS_FILE", "AGENTS.md")
+DEFAULT_OUTPUT_DIR = Path(
+    os.getenv("NANOBANANA_OUTPUT_DIR", "skills/nanobanana-mcp/output")
+)
+DEFAULT_HTTP_RETRIES = int(os.getenv("NANOBANANA_HTTP_RETRIES", "3"))
+DEFAULT_HTTP_RETRY_BACKOFF_SECONDS = float(
+    os.getenv("NANOBANANA_HTTP_RETRY_BACKOFF_SECONDS", "1.5")
+)
+DEFAULT_LOG_FILE = os.getenv("NANOBANANA_LOG_FILE", "")
 
 mcp = FastMCP(SERVER_NAME)
 
@@ -73,7 +85,9 @@ def _default_file_name(prompt: str, fmt: str) -> str:
     return f"{ts}-{_slugify(prompt)}.{fmt}"
 
 
-def _resolve_output_path(output_path: Optional[str], prompt: str, image_format: str) -> Path:
+def _resolve_output_path(
+    output_path: Optional[str], prompt: str, image_format: str
+) -> Path:
     if output_path:
         path = Path(output_path)
         if path.is_dir() or str(output_path).endswith(("/", "\\")):
@@ -108,78 +122,13 @@ def _compose_prompt(
         )
     sections.extend(
         [
-        "Generate this scene:",
-        prompt.strip(),
+            "Generate this scene:",
+            prompt.strip(),
         ]
     )
     if negative_prompt:
         sections.extend(["", "Avoid:", negative_prompt.strip()])
     return "\n".join(sections).strip()
-
-
-def _extract_role_section(md_text: str, role_name: str) -> Optional[str]:
-    # Match headings like: ### `appsec-imager` or ### appsec-imager
-    heading_re = re.compile(rf"^###\s+`?{re.escape(role_name)}`?\s*$", re.IGNORECASE)
-    next_heading_re = re.compile(r"^###\s+")
-    lines = md_text.splitlines()
-
-    start = None
-    for i, line in enumerate(lines):
-        if heading_re.match(line.strip()):
-            start = i + 1
-            break
-    if start is None:
-        return None
-
-    end = len(lines)
-    for i in range(start, len(lines)):
-        if next_heading_re.match(lines[i].strip()):
-            end = i
-            break
-    return "\n".join(lines[start:end]).strip()
-
-
-def _extract_behavior_bullets(role_section: str) -> List[str]:
-    lines = role_section.splitlines()
-    behavior_idx = None
-    for i, line in enumerate(lines):
-        if line.strip().lower().startswith("behavior:"):
-            behavior_idx = i + 1
-            break
-
-    scan_from = behavior_idx if behavior_idx is not None else 0
-    bullets: List[str] = []
-    for line in lines[scan_from:]:
-        stripped = line.strip()
-        if stripped.startswith("### "):
-            break
-        if stripped.startswith("- "):
-            bullets.append(stripped[2:].strip())
-        elif behavior_idx is not None and stripped and not stripped.startswith("#"):
-            # Stop behavior scan when next non-bullet content starts.
-            break
-    return bullets
-
-
-def _load_role_style(role_name: str = "appsec-imager", agents_file: Optional[str] = None) -> str:
-    path = Path(agents_file or os.getenv("NANOBANANA_AGENTS_FILE", DEFAULT_AGENTS_FILE))
-    if not path.exists():
-        raise FileNotFoundError(
-            f"AGENTS file not found: {path.as_posix()} (set NANOBANANA_AGENTS_FILE or pass agents_file)"
-        )
-
-    raw = path.read_text(encoding="utf-8")
-    section = _extract_role_section(raw, role_name=role_name)
-    if not section:
-        raise ValueError(f"Role '{role_name}' not found in {path.as_posix()}")
-
-    bullets = _extract_behavior_bullets(section)
-    if not bullets:
-        raise ValueError(
-            f"Role '{role_name}' found but no behavior bullet list detected in {path.as_posix()}"
-        )
-
-    return "\n".join(f"- {item}" for item in bullets)
 
 
 def _build_url(base_url: str, path: str) -> str:
@@ -190,35 +139,105 @@ def _build_url(base_url: str, path: str) -> str:
     return f"{base_url}{path}"
 
 
-def _http_post_json(url: str, body: Dict[str, Any], headers: Dict[str, str], timeout: int) -> Dict[str, Any]:
-    req = urllib.request.Request(
-        url,
-        data=json.dumps(body).encode("utf-8"),
-        headers={"Content-Type": "application/json", **headers},
-        method="POST",
-    )
+def _log_event(event: str, payload: Dict[str, Any]) -> None:
+    if not DEFAULT_LOG_FILE:
+        return
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            payload = resp.read().decode("utf-8")
-            return json.loads(payload) if payload else {}
-    except urllib.error.HTTPError as exc:
-        details = exc.read().decode("utf-8", errors="replace")
-        raise RuntimeError(f"HTTP {exc.code} calling {url}: {details}") from exc
-    except urllib.error.URLError as exc:
-        raise RuntimeError(f"Network error calling {url}: {exc}") from exc
+        line = {
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "event": event,
+            **payload,
+        }
+        log_path = Path(DEFAULT_LOG_FILE)
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        with log_path.open("a", encoding="utf-8") as file:
+            file.write(json.dumps(line, ensure_ascii=False) + "\n")
+    except Exception:
+        return
+
+
+def _should_retry_http(code: int) -> bool:
+    return code in {408, 425, 429, 500, 502, 503, 504}
+
+
+def _retry_delay(attempt: int) -> float:
+    base = max(0.1, DEFAULT_HTTP_RETRY_BACKOFF_SECONDS)
+    return base * attempt
+
+
+def _http_post_json(
+    url: str, body: Dict[str, Any], headers: Dict[str, str], timeout: int
+) -> Dict[str, Any]:
+    last_exc: Optional[Exception] = None
+    retries = max(1, DEFAULT_HTTP_RETRIES)
+    for attempt in range(1, retries + 1):
+        req = urllib.request.Request(
+            url,
+            data=json.dumps(body).encode("utf-8"),
+            headers={"Content-Type": "application/json", **headers},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                payload = resp.read().decode("utf-8")
+                return json.loads(payload) if payload else {}
+        except urllib.error.HTTPError as exc:
+            details = exc.read().decode("utf-8", errors="replace")
+            last_exc = RuntimeError(f"HTTP {exc.code} calling {url}: {details}")
+            _log_event(
+                "http_post_error", {"url": url, "code": exc.code, "attempt": attempt}
+            )
+            if attempt < retries and _should_retry_http(exc.code):
+                time.sleep(_retry_delay(attempt))
+                continue
+            raise last_exc from exc
+        except urllib.error.URLError as exc:
+            last_exc = RuntimeError(f"Network error calling {url}: {exc}")
+            _log_event(
+                "http_post_network_error",
+                {"url": url, "attempt": attempt, "error": str(exc)},
+            )
+            if attempt < retries:
+                time.sleep(_retry_delay(attempt))
+                continue
+            raise last_exc from exc
+    if last_exc:
+        raise last_exc
+    raise RuntimeError(f"Unknown HTTP POST failure for {url}")
 
 
 def _http_get_json(url: str, headers: Dict[str, str], timeout: int) -> Dict[str, Any]:
-    req = urllib.request.Request(url, headers=headers, method="GET")
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            payload = resp.read().decode("utf-8")
-            return json.loads(payload) if payload else {}
-    except urllib.error.HTTPError as exc:
-        details = exc.read().decode("utf-8", errors="replace")
-        raise RuntimeError(f"HTTP {exc.code} calling {url}: {details}") from exc
-    except urllib.error.URLError as exc:
-        raise RuntimeError(f"Network error calling {url}: {exc}") from exc
+    last_exc: Optional[Exception] = None
+    retries = max(1, DEFAULT_HTTP_RETRIES)
+    for attempt in range(1, retries + 1):
+        req = urllib.request.Request(url, headers=headers, method="GET")
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                payload = resp.read().decode("utf-8")
+                return json.loads(payload) if payload else {}
+        except urllib.error.HTTPError as exc:
+            details = exc.read().decode("utf-8", errors="replace")
+            last_exc = RuntimeError(f"HTTP {exc.code} calling {url}: {details}")
+            _log_event(
+                "http_get_error", {"url": url, "code": exc.code, "attempt": attempt}
+            )
+            if attempt < retries and _should_retry_http(exc.code):
+                time.sleep(_retry_delay(attempt))
+                continue
+            raise last_exc from exc
+        except urllib.error.URLError as exc:
+            last_exc = RuntimeError(f"Network error calling {url}: {exc}")
+            _log_event(
+                "http_get_network_error",
+                {"url": url, "attempt": attempt, "error": str(exc)},
+            )
+            if attempt < retries:
+                time.sleep(_retry_delay(attempt))
+                continue
+            raise last_exc from exc
+    if last_exc:
+        raise last_exc
+    raise RuntimeError(f"Unknown HTTP GET failure for {url}")
 
 
 def _http_get_bytes(url: str, headers: Dict[str, str], timeout: int) -> bytes:
@@ -227,22 +246,63 @@ def _http_get_bytes(url: str, headers: Dict[str, str], timeout: int) -> bytes:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             return resp.read()
 
-    try:
-        return _fetch(headers)
-    except urllib.error.HTTPError as exc:
-        details = exc.read().decode("utf-8", errors="replace")
-        if exc.code == 403:
-            # Retry without auth header and with a basic UA for CDN links.
-            retry_headers = {k: v for k, v in headers.items() if k.lower() != "authorization"}
-            retry_headers.setdefault("User-Agent", "Mozilla/5.0")
-            try:
-                return _fetch(retry_headers)
-            except urllib.error.HTTPError as exc_retry:
-                details = exc_retry.read().decode("utf-8", errors="replace")
-                raise RuntimeError(f"HTTP {exc_retry.code} downloading image {url}: {details}") from exc_retry
-        raise RuntimeError(f"HTTP {exc.code} downloading image {url}: {details}") from exc
-    except urllib.error.URLError as exc:
-        raise RuntimeError(f"Network error downloading image {url}: {exc}") from exc
+    last_exc: Optional[Exception] = None
+    retries = max(1, DEFAULT_HTTP_RETRIES)
+    for attempt in range(1, retries + 1):
+        try:
+            return _fetch(headers)
+        except urllib.error.HTTPError as exc:
+            details = exc.read().decode("utf-8", errors="replace")
+            if exc.code == 403:
+                retry_headers = {
+                    k: v for k, v in headers.items() if k.lower() != "authorization"
+                }
+                retry_headers.setdefault("User-Agent", "Mozilla/5.0")
+                try:
+                    return _fetch(retry_headers)
+                except urllib.error.HTTPError as exc_retry:
+                    details = exc_retry.read().decode("utf-8", errors="replace")
+                    last_exc = RuntimeError(
+                        f"HTTP {exc_retry.code} downloading image {url}: {details}"
+                    )
+                    _log_event(
+                        "http_get_bytes_error",
+                        {"url": url, "code": exc_retry.code, "attempt": attempt},
+                    )
+            else:
+                last_exc = RuntimeError(
+                    f"HTTP {exc.code} downloading image {url}: {details}"
+                )
+                _log_event(
+                    "http_get_bytes_error",
+                    {"url": url, "code": exc.code, "attempt": attempt},
+                )
+
+            if attempt < retries and (
+                (
+                    isinstance(exc, urllib.error.HTTPError)
+                    and _should_retry_http(exc.code)
+                )
+                or exc.code == 403
+            ):
+                time.sleep(_retry_delay(attempt))
+                continue
+            if last_exc:
+                raise last_exc from exc
+            raise RuntimeError(f"HTTP error downloading image {url}") from exc
+        except urllib.error.URLError as exc:
+            last_exc = RuntimeError(f"Network error downloading image {url}: {exc}")
+            _log_event(
+                "http_get_bytes_network_error",
+                {"url": url, "attempt": attempt, "error": str(exc)},
+            )
+            if attempt < retries:
+                time.sleep(_retry_delay(attempt))
+                continue
+            raise last_exc from exc
+    if last_exc:
+        raise last_exc
+    raise RuntimeError(f"Unknown image download failure for {url}")
 
 
 def _walk(value: Any) -> Iterable[Any]:
@@ -292,8 +352,14 @@ def _extract_image_url(payload: Dict[str, Any]) -> Optional[str]:
             lower = node.lower()
             if any(ext in lower for ext in (".png", ".jpg", ".jpeg", ".webp")):
                 return node
-    value = _find_key_recursive(payload, ("imageUrl", "image_url", "url", "outputUrl", "output_url"))
-    return str(value) if isinstance(value, str) and value.startswith(("http://", "https://")) else None
+    value = _find_key_recursive(
+        payload, ("imageUrl", "image_url", "url", "outputUrl", "output_url")
+    )
+    return (
+        str(value)
+        if isinstance(value, str) and value.startswith(("http://", "https://"))
+        else None
+    )
 
 
 def _extract_result_json_urls(payload: Dict[str, Any]) -> List[str]:
@@ -314,7 +380,9 @@ def _extract_result_json_urls(payload: Dict[str, Any]) -> List[str]:
 
 
 def _extract_b64(payload: Dict[str, Any]) -> Optional[str]:
-    value = _find_key_recursive(payload, ("b64_json", "b64", "base64", "imageBase64", "image_base64"))
+    value = _find_key_recursive(
+        payload, ("b64_json", "b64", "base64", "imageBase64", "image_base64")
+    )
     return str(value) if isinstance(value, str) and value.strip() else None
 
 
@@ -353,7 +421,9 @@ def _create_task(
     body: Dict[str, Any],
     timeout: int,
 ) -> Dict[str, Any]:
-    return _http_post_json(_build_url(base_url, path), body, headers=_headers(api_key), timeout=timeout)
+    return _http_post_json(
+        _build_url(base_url, path), body, headers=_headers(api_key), timeout=timeout
+    )
 
 
 def _get_task(
@@ -416,22 +486,16 @@ def describe_imager_interface() -> Dict[str, Any]:
                     "poll_timeout_seconds",
                 ],
             },
-            "generate_visual_from_appsec_imager": {
-                "required": ["prompt"],
+            "generate_visual_batch": {
+                "required": ["items"],
                 "optional": [
-                    "platform",
-                    "agents_file",
-                    "output_path",
-                    "callback_url",
-                    "aspect_ratio",
-                    "resolution",
-                    "output_format",
-                    "image_input",
-                    "model",
-                    "negative_prompt",
-                    "wait_for_result",
-                    "poll_interval_seconds",
-                    "poll_timeout_seconds",
+                    "default_style",
+                    "default_platform",
+                    "max_workers",
+                    "continue_on_error",
+                    "default_wait_for_result",
+                    "default_poll_interval_seconds",
+                    "default_poll_timeout_seconds",
                 ],
             },
         },
@@ -445,7 +509,9 @@ def describe_imager_interface() -> Dict[str, Any]:
             "NANOBANANA_POLL_INTERVAL_SECONDS": f"optional (default: {DEFAULT_POLL_INTERVAL})",
             "NANOBANANA_POLL_TIMEOUT_SECONDS": f"optional (default: {DEFAULT_POLL_TIMEOUT})",
             "NANOBANANA_OUTPUT_DIR": f"optional (default: {DEFAULT_OUTPUT_DIR.as_posix()})",
-            "NANOBANANA_AGENTS_FILE": f"optional (default: {DEFAULT_AGENTS_FILE})",
+            "NANOBANANA_HTTP_RETRIES": f"optional (default: {DEFAULT_HTTP_RETRIES})",
+            "NANOBANANA_HTTP_RETRY_BACKOFF_SECONDS": f"optional (default: {DEFAULT_HTTP_RETRY_BACKOFF_SECONDS})",
+            "NANOBANANA_LOG_FILE": "optional (JSONL diagnostics file path)",
         },
     }
 
@@ -477,7 +543,9 @@ def create_visual_task(
 
     api_key = _env_or_fail("NANOBANANA_API_KEY")
     base_url = os.getenv("NANOBANANA_BASE_URL", DEFAULT_BASE_URL).rstrip("/")
-    create_task_path = os.getenv("NANOBANANA_CREATE_TASK_PATH", DEFAULT_CREATE_TASK_PATH)
+    create_task_path = os.getenv(
+        "NANOBANANA_CREATE_TASK_PATH", DEFAULT_CREATE_TASK_PATH
+    )
     selected_model = model or os.getenv("NANOBANANA_MODEL", DEFAULT_MODEL)
     timeout_seconds = int(os.getenv("NANOBANANA_TIMEOUT_SECONDS", str(DEFAULT_TIMEOUT)))
 
@@ -576,6 +644,11 @@ def generate_visual(
     poll_timeout_seconds: Optional[int] = None,
 ) -> Dict[str, Any]:
     """Create a NanoBanana task and optionally wait for final image file."""
+    request_id = uuid4().hex[:12]
+    _log_event(
+        "generate_visual_start", {"request_id": request_id, "platform": platform}
+    )
+
     created = create_visual_task(
         style=style,
         prompt=prompt,
@@ -591,27 +664,41 @@ def generate_visual(
 
     task_id = created.get("task_id")
     if not task_id:
+        _log_event("generate_visual_missing_task_id", {"request_id": request_id})
         return {
             "ok": False,
             "error": "Task created but task_id was not found in response",
             "create_response": created,
+            "request_id": request_id,
         }
 
     if not wait_for_result:
+        _log_event(
+            "generate_visual_submitted", {"request_id": request_id, "task_id": task_id}
+        )
         return {
             "ok": True,
             "task_id": task_id,
             "status": "submitted",
             "platform": platform,
             "create_response": created,
+            "request_id": request_id,
         }
 
     api_key = _env_or_fail("NANOBANANA_API_KEY")
     base_url = os.getenv("NANOBANANA_BASE_URL", DEFAULT_BASE_URL).rstrip("/")
     get_task_path = os.getenv("NANOBANANA_GET_TASK_PATH", DEFAULT_GET_TASK_PATH)
     timeout_seconds = int(os.getenv("NANOBANANA_TIMEOUT_SECONDS", str(DEFAULT_TIMEOUT)))
-    interval = poll_interval_seconds if poll_interval_seconds is not None else DEFAULT_POLL_INTERVAL
-    max_wait = poll_timeout_seconds if poll_timeout_seconds is not None else DEFAULT_POLL_TIMEOUT
+    interval = (
+        poll_interval_seconds
+        if poll_interval_seconds is not None
+        else DEFAULT_POLL_INTERVAL
+    )
+    max_wait = (
+        poll_timeout_seconds
+        if poll_timeout_seconds is not None
+        else DEFAULT_POLL_TIMEOUT
+    )
 
     start = time.time()
     last: Dict[str, Any] = {}
@@ -627,12 +714,17 @@ def generate_visual(
         status = _extract_status(last)
 
         if _is_failure(status):
+            _log_event(
+                "generate_visual_task_failed",
+                {"request_id": request_id, "task_id": task_id, "status": status},
+            )
             return {
                 "ok": False,
                 "task_id": task_id,
                 "status": status,
                 "create_response": created,
                 "task_response": last,
+                "request_id": request_id,
             }
 
         if _is_success(status):
@@ -640,6 +732,10 @@ def generate_visual(
 
         time.sleep(max(0.2, float(interval)))
     else:
+        _log_event(
+            "generate_visual_timeout",
+            {"request_id": request_id, "task_id": task_id, "max_wait": max_wait},
+        )
         raise TimeoutError(f"Task {task_id} did not finish in {max_wait}s")
 
     image_b64 = _extract_b64(last)
@@ -652,8 +748,13 @@ def generate_visual(
     if image_b64:
         image_bytes = base64.b64decode(image_b64)
     elif image_url:
-        image_bytes = _http_get_bytes(image_url, headers=_headers(api_key), timeout=timeout_seconds)
+        image_bytes = _http_get_bytes(
+            image_url, headers=_headers(api_key), timeout=timeout_seconds
+        )
     else:
+        _log_event(
+            "generate_visual_no_payload", {"request_id": request_id, "task_id": task_id}
+        )
         return {
             "ok": True,
             "task_id": task_id,
@@ -661,6 +762,7 @@ def generate_visual(
             "warning": "Task completed but no image payload found. Use callback payload or inspect task_response.",
             "create_response": created,
             "task_response": last,
+            "request_id": request_id,
         }
 
     normalized_format = output_format.lower().strip()
@@ -669,8 +771,18 @@ def generate_visual(
     if normalized_format not in {"png", "jpeg", "webp"}:
         normalized_format = "png"
 
-    file_path = _resolve_output_path(output_path=output_path, prompt=prompt, image_format=normalized_format)
+    file_path = _resolve_output_path(
+        output_path=output_path, prompt=prompt, image_format=normalized_format
+    )
     file_path.write_bytes(image_bytes)
+    _log_event(
+        "generate_visual_success",
+        {
+            "request_id": request_id,
+            "task_id": task_id,
+            "output_path": file_path.as_posix(),
+        },
+    )
 
     mime, _ = mimetypes.guess_type(file_path.name)
     return {
@@ -684,50 +796,112 @@ def generate_visual(
         "image_url": image_url,
         "create_response": created,
         "task_response": last,
+        "request_id": request_id,
     }
 
 
 @mcp.tool()
-def generate_visual_from_appsec_imager(
-    prompt: str,
-    platform: Optional[str] = None,
-    agents_file: Optional[str] = None,
-    output_path: Optional[str] = None,
-    callback_url: Optional[str] = None,
-    aspect_ratio: str = "1:1",
-    resolution: str = "1K",
-    output_format: str = "png",
-    image_input: Optional[List[str]] = None,
-    model: Optional[str] = None,
-    negative_prompt: Optional[str] = None,
-    wait_for_result: bool = True,
-    poll_interval_seconds: Optional[float] = None,
-    poll_timeout_seconds: Optional[int] = None,
+def generate_visual_batch(
+    items: List[Dict[str, Any]],
+    default_style: Optional[str] = None,
+    default_platform: Optional[str] = None,
+    max_workers: int = 3,
+    continue_on_error: bool = True,
+    default_wait_for_result: bool = True,
+    default_poll_interval_seconds: Optional[float] = None,
+    default_poll_timeout_seconds: Optional[int] = None,
 ) -> Dict[str, Any]:
-    """Generate visual using style auto-loaded from role `appsec-imager` in AGENTS.md."""
-    if not prompt.strip():
-        raise ValueError("'prompt' cannot be empty")
+    """Run multiple visual generations in parallel.
 
-    style = _load_role_style(role_name="appsec-imager", agents_file=agents_file)
-    result = generate_visual(
-        style=style,
-        prompt=prompt,
-        platform=platform,
-        output_path=output_path,
-        callback_url=callback_url,
-        aspect_ratio=aspect_ratio,
-        resolution=resolution,
-        output_format=output_format,
-        image_input=image_input,
-        model=model,
-        negative_prompt=negative_prompt,
-        wait_for_result=wait_for_result,
-        poll_interval_seconds=poll_interval_seconds,
-        poll_timeout_seconds=poll_timeout_seconds,
-    )
-    result["style_source"] = (agents_file or os.getenv("NANOBANANA_AGENTS_FILE", DEFAULT_AGENTS_FILE))
-    result["style_role"] = "appsec-imager"
-    return result
+    Each item supports the same fields as `generate_visual`, with required
+    `prompt` and either item `style` or `default_style`.
+    """
+    if not items:
+        raise ValueError("'items' cannot be empty")
+
+    worker_count = max(1, min(int(max_workers), 16))
+
+    def _run_one(index: int, item: Dict[str, Any]) -> Dict[str, Any]:
+        if not isinstance(item, dict):
+            return {
+                "index": index,
+                "ok": False,
+                "error": "Each item must be an object",
+            }
+
+        prompt_value = str(item.get("prompt", "")).strip()
+        if not prompt_value:
+            return {
+                "index": index,
+                "ok": False,
+                "error": "Item is missing non-empty 'prompt'",
+            }
+
+        style_value = item.get("style", default_style)
+        if not isinstance(style_value, str) or not style_value.strip():
+            return {
+                "index": index,
+                "ok": False,
+                "error": "Item is missing non-empty 'style' and no 'default_style' was provided",
+            }
+
+        try:
+            result = generate_visual(
+                style=style_value,
+                prompt=prompt_value,
+                platform=item.get("platform", default_platform),
+                output_path=item.get("output_path"),
+                callback_url=item.get("callback_url"),
+                aspect_ratio=item.get("aspect_ratio", "1:1"),
+                resolution=item.get("resolution", "1K"),
+                output_format=item.get("output_format", "png"),
+                image_input=item.get("image_input"),
+                model=item.get("model"),
+                negative_prompt=item.get("negative_prompt"),
+                wait_for_result=item.get("wait_for_result", default_wait_for_result),
+                poll_interval_seconds=item.get(
+                    "poll_interval_seconds", default_poll_interval_seconds
+                ),
+                poll_timeout_seconds=item.get(
+                    "poll_timeout_seconds", default_poll_timeout_seconds
+                ),
+            )
+            return {
+                "index": index,
+                "ok": bool(result.get("ok", True)),
+                "result": result,
+            }
+        except Exception as exc:  # noqa: BLE001
+            return {
+                "index": index,
+                "ok": False,
+                "error": str(exc),
+            }
+
+    outputs: List[Dict[str, Any]] = []
+    with ThreadPoolExecutor(max_workers=worker_count) as executor:
+        futures = [
+            executor.submit(_run_one, idx, item) for idx, item in enumerate(items)
+        ]
+        for future in as_completed(futures):
+            outputs.append(future.result())
+
+    outputs.sort(key=lambda item: int(item.get("index", 0)))
+    failed = [entry for entry in outputs if not entry.get("ok")]
+
+    if failed and not continue_on_error:
+        first_error = failed[0].get("error") or "One or more batch items failed"
+        raise RuntimeError(first_error)
+
+    return {
+        "ok": len(failed) == 0,
+        "total": len(outputs),
+        "succeeded": len(outputs) - len(failed),
+        "failed": len(failed),
+        "max_workers": worker_count,
+        "continue_on_error": continue_on_error,
+        "results": outputs,
+    }
 
 
 def main() -> None:
