@@ -79,7 +79,9 @@ func getVisualTaskHandler(cfg kieai.Config) func(context.Context, mcp.CallToolRe
 		}
 		if data.ResultJSON != "" {
 			var rj kieai.ResultJSON
-			if jsonErr := json.Unmarshal([]byte(data.ResultJSON), &rj); jsonErr == nil && len(rj.ResultURLs) > 0 {
+			if jsonErr := json.Unmarshal([]byte(data.ResultJSON), &rj); jsonErr != nil {
+				result["result_json_error"] = jsonErr.Error()
+			} else if len(rj.ResultURLs) > 0 {
 				result["image_urls"] = rj.ResultURLs
 			}
 		}
