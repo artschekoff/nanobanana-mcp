@@ -100,7 +100,11 @@ func generateVisualHandler(cfg kieai.Config) func(context.Context, mcp.CallToolR
 func resolveOutputPath(outputPath, outputDir, prompt, ext string) string {
 	fileName := defaultFileName(prompt, ext)
 	if outputPath == "" {
-		return filepath.Join(outputDir, fileName)
+		dir := outputDir
+		if dir == "" {
+			dir = "output"
+		}
+		return filepath.Join(dir, fileName)
 	}
 	info, err := os.Stat(outputPath)
 	if err == nil && info.IsDir() {
