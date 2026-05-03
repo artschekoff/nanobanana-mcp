@@ -1,6 +1,9 @@
 # Env
-scripts/.env
-!scripts/.env.example
+.env
+!.env.example
+
+# Build artifacts
+bin/
 
 # Outputs
 output/
