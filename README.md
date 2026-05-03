@@ -1,11 +1,11 @@
-# NanoBanana MCP Server
+# Kie AI MCP Server
 
-Minimal MCP server that bridges to the Kie AI Nano Banana image API. It creates tasks, polls for completion, and saves the resulting image to disk. Designed for AppSec/social visual workflows, but works with any prompt and style.
+MCP server that bridges to the Kie AI image generation API. Creates tasks, polls for completion, and saves the resulting image to disk. Works with any prompt and style.
 
 **Author:** [roxl.net](https://roxl.net)
 
 ## Example
-![NanoBanana MCP example](images/nanobanana-mcp.png)
+![Kie AI MCP example](images/nanobanana-mcp.png)
 
 ## What It Does
 - Creates image generation tasks via Kie AI
@@ -14,37 +14,34 @@ Minimal MCP server that bridges to the Kie AI Nano Banana image API. It creates 
 - Supports parallel batch generation with explicit style/prompt per item
 
 ## Quick Start
-1. Add your API key to `.env` (or use `.env.example` as a template).
-2. Run one command to install dependencies and start the server:
 
 ```bash
-cd <PROJECT_FOLDER> && python3 -m pip install -r scripts/requirements.txt && python3 scripts/server.py
-```
+# Build
+make build
 
-3. For later runs, start with:
+# Copy env template and add your API key
+cp .env.example .env
+# edit .env — set KIE_AI_API_KEY
 
-```bash
-cd <PROJECT_FOLDER> && python3 scripts/server.py
+# Run
+./bin/kie-ai-mcp
 ```
 
 ## Environment Variables
-Required:
-- `NANOBANANA_API_KEY`
 
-Optional:
-- `NANOBANANA_BASE_URL` (default `https://api.kie.ai/api/v1`)
-- `NANOBANANA_MODEL` (default `nano-banana-pro`)
-- `NANOBANANA_CREATE_TASK_PATH` (default `/jobs/createTask`)
-- `NANOBANANA_GET_TASK_PATH` (default `/jobs/recordInfo`)
-- `NANOBANANA_TIMEOUT_SECONDS` (default `90`)
-- `NANOBANANA_POLL_INTERVAL_SECONDS` (default `3`)
-- `NANOBANANA_POLL_TIMEOUT_SECONDS` (default `300`)
-- `NANOBANANA_OUTPUT_DIR` (default `skills/nanobanana-mcp/output`)
-- `NANOBANANA_HTTP_RETRIES` (default `3`)
-- `NANOBANANA_HTTP_RETRY_BACKOFF_SECONDS` (default `1.5`)
-- `NANOBANANA_LOG_FILE` (optional; if set, writes JSONL diagnostics)
+| Variable | Required | Default | Description |
+|---|---|---|---|
+| `KIE_AI_API_KEY` | **yes** | — | Your [Kie AI](https://kie.ai) API key |
+| `KIE_AI_BASE_URL` | no | `https://api.kie.ai/api/v1` | API base URL |
+| `KIE_AI_MODEL` | no | `nano-banana-pro` | Image generation model |
+| `KIE_AI_OUTPUT_DIR` | no | `output` | Directory where generated images are saved |
+| `KIE_AI_TIMEOUT_SECONDS` | no | `90` | Per-request HTTP timeout |
+| `KIE_AI_POLL_INTERVAL_SECONDS` | no | `3` | Seconds between task status polls |
+| `KIE_AI_POLL_TIMEOUT_SECONDS` | no | `300` | Max seconds to wait for a task to complete |
+| `KIE_AI_HTTP_RETRIES` | no | `3` | Retry attempts on transient HTTP errors |
+| `KIE_AI_HTTP_RETRY_BACKOFF_SECONDS` | no | `1.5` | Initial backoff delay for retries (doubles each attempt) |
 
-See `.env.example` for a full template.
+Copy `.env.example` to `.env` and fill in `KIE_AI_API_KEY` at minimum.
 
 ## MCP Tools
 - `describe_imager_interface` — Returns tool contracts and environment info.
@@ -54,10 +51,9 @@ See `.env.example` for a full template.
 - `generate_visual_batch` — Runs multiple generations in parallel (`items[]`, `default_style`, `max_workers`, per-item outputs/errors).
 
 ## Notes
-- The server reads `.env` from the project root or from `skills/nanobanana-mcp/.env`.
-- Images are saved to `NANOBANANA_OUTPUT_DIR` unless `output_path` is passed.
-- No secrets are stored in this repository. Do not commit your `.env`.
+- The server reads `.env` from the working directory or from the directory containing the binary.
+- Images are saved to `KIE_AI_OUTPUT_DIR` unless `output_path` is passed per-call.
+- Do not commit your `.env`.
 
 ## References
-- API details: `skills/nanobanana-mcp/references/kie-api.md`
-- Server implementation: `skills/nanobanana-mcp/scripts/server.py`
+- API details: `references/kie-api.md`
