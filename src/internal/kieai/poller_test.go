@@ -6,7 +6,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/artschekoff/kie-ai-mcp/internal/kieai"
+	"github.com/artschekoff/kie-ai-mcp/src/internal/kieai"
 )
 
 func TestPollUntilDone_Success(t *testing.T) {

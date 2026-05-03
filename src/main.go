@@ -5,8 +5,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/artschekoff/kie-ai-mcp/internal/kieai"
-	"github.com/artschekoff/kie-ai-mcp/internal/tools"
+	"github.com/artschekoff/kie-ai-mcp/src/internal/kieai"
+	"github.com/artschekoff/kie-ai-mcp/src/internal/tools"
 	"github.com/joho/godotenv"
 	"github.com/mark3labs/mcp-go/server"
 )

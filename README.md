@@ -43,6 +43,58 @@ cp .env.example .env
 
 Copy `.env.example` to `.env` and fill in `KIE_AI_API_KEY` at minimum.
 
+### Fish Shell (global, no .env file)
+
+Set variables as universal fish vars so they persist across sessions and are available to any process:
+
+```fish
+set -Ux KIE_AI_API_KEY your-api-key-here
+set -Ux KIE_AI_BASE_URL https://api.kie.ai/api/v1
+set -Ux KIE_AI_MODEL nano-banana-pro
+set -Ux KIE_AI_OUTPUT_DIR output
+set -Ux KIE_AI_TIMEOUT_SECONDS 90
+set -Ux KIE_AI_POLL_INTERVAL_SECONDS 3
+set -Ux KIE_AI_POLL_TIMEOUT_SECONDS 300
+set -Ux KIE_AI_HTTP_RETRIES 3
+set -Ux KIE_AI_HTTP_RETRY_BACKOFF_SECONDS 1.5
+```
+
+`-U` makes the variable universal (persists across sessions), `-x` exports it to child processes. No `.env` file needed.
+
+### MCP Host Config (recommended for distribution)
+
+Pass the key via the MCP host's `env` block — the key lives outside the repo and never appears in tool messages or logs.
+
+**Claude Desktop** (`~/Library/Application Support/Claude/claude_desktop_config.json`):
+
+```json
+{
+  "mcpServers": {
+    "kie-ai-mcp": {
+      "command": "/path/to/kie-ai-mcp",
+      "env": {
+        "KIE_AI_API_KEY": "your-key-here"
+      }
+    }
+  }
+}
+```
+
+**Claude Code** (`.claude/mcp_servers.json` or `~/.claude/mcp_servers.json`):
+
+```json
+{
+  "kie-ai-mcp": {
+    "command": "/path/to/kie-ai-mcp",
+    "env": {
+      "KIE_AI_API_KEY": "your-key-here"
+    }
+  }
+}
+```
+
+No `.env` file needed. Optional variables (`KIE_AI_MODEL`, `KIE_AI_OUTPUT_DIR`, etc.) can be added to the same `env` block.
+
 ## MCP Tools
 - `describe_imager_interface` — Returns tool contracts and environment info.
 - `create_visual_task` — Creates a task and returns `task_id`.

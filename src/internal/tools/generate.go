@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"sync"
 
-	"github.com/artschekoff/kie-ai-mcp/internal/kieai"
+	"github.com/artschekoff/kie-ai-mcp/src/internal/kieai"
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
