@@ -12,11 +12,17 @@ Run the bundled MCP server, submit image jobs, poll completion, and save images.
 
 ## Quick Start
 
-1. Set `NANOBANANA_API_KEY` in `.env` (or `skills/nanobanana-mcp/.env`).
-2. Run this one command to install deps (if needed) and start the MCP server:
-   `cd <PROJECT_FOLDER> && python3 -m pip install -r scripts/requirements.txt && python3 scripts/server.py`
-3. For later runs (faster start), use: `cd <PROJECT_FOLDER> && python3 scripts/server.py`.
-4. Call tool `generate_visual` with `style`, `prompt`, and `platform`.
+1. Copy `.env.example` to `.env` next to the binary (or in the project root) and set `KIE_AI_API_KEY`.
+2. Build the server:
+   ```bash
+   make build
+   ```
+3. Run the MCP server:
+   ```bash
+   ./bin/kie-ai-mcp
+   ```
+   Or for development: `go run .`
+4. Call tool `generate_visual` with `style` and `prompt`.
 
 ## Core Workflow
 
@@ -57,7 +63,7 @@ Run the bundled MCP server, submit image jobs, poll completion, and save images.
 ## Resources
 
 - API and env details: `references/kie-api.md`
-- MCP server implementation: `scripts/server.py`
+- MCP server implementation: Go binary at `bin/kie-ai-mcp` (source: `main.go`)
 
 ## Constraints
 
