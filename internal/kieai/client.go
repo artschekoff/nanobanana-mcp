@@ -32,19 +32,25 @@ func retryDelay(attempt int, backoff float64) time.Duration {
 	return time.Duration(backoff * float64(attempt) * float64(time.Second))
 }
 
-func doPost(url, apiKey string, body []byte, timeoutSec, retries int, backoff float64) ([]byte, error) {
+func doRequest(method, url, apiKey string, body []byte, timeoutSec, retries int, backoff float64) ([]byte, error) {
 	client := &http.Client{Timeout: time.Duration(timeoutSec) * time.Second}
 	if retries < 1 {
 		retries = 1
 	}
 	var lastErr error
 	for attempt := 1; attempt <= retries; attempt++ {
-		req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
+		var bodyReader io.Reader
+		if body != nil {
+			bodyReader = bytes.NewReader(body)
+		}
+		req, err := http.NewRequest(method, url, bodyReader)
 		if err != nil {
 			return nil, err
 		}
 		req.Header.Set("Authorization", "Bearer "+apiKey)
-		req.Header.Set("Content-Type", "application/json")
+		if body != nil {
+			req.Header.Set("Content-Type", "application/json")
+		}
 
 		resp, err := client.Do(req)
 		if err != nil {
@@ -54,44 +60,15 @@ func doPost(url, apiKey string, body []byte, timeoutSec, retries int, backoff fl
 			}
 			continue
 		}
-		raw, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
-		if resp.StatusCode >= 300 {
-			lastErr = fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(raw))
-			if attempt < retries && isTransient(resp.StatusCode) {
-				time.Sleep(retryDelay(attempt, backoff))
-				continue
-			}
-			return nil, lastErr
-		}
-		return raw, nil
-	}
-	return nil, lastErr
-}
-
-func doGet(url, apiKey string, timeoutSec, retries int, backoff float64) ([]byte, error) {
-	client := &http.Client{Timeout: time.Duration(timeoutSec) * time.Second}
-	if retries < 1 {
-		retries = 1
-	}
-	var lastErr error
-	for attempt := 1; attempt <= retries; attempt++ {
-		req, err := http.NewRequest(http.MethodGet, url, nil)
-		if err != nil {
-			return nil, err
-		}
-		req.Header.Set("Authorization", "Bearer "+apiKey)
-
-		resp, err := client.Do(req)
-		if err != nil {
-			lastErr = fmt.Errorf("network error: %w", err)
+		defer resp.Body.Close()
+		raw, readErr := io.ReadAll(resp.Body)
+		if readErr != nil {
+			lastErr = fmt.Errorf("read response body: %w", readErr)
 			if attempt < retries {
 				time.Sleep(retryDelay(attempt, backoff))
 			}
 			continue
 		}
-		raw, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
 		if resp.StatusCode >= 300 {
 			lastErr = fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(raw))
 			if attempt < retries && isTransient(resp.StatusCode) {
@@ -115,7 +92,7 @@ func CreateTask(cfg Config, req CreateTaskRequest) (string, error) {
 		return "", err
 	}
 	url := buildURL(cfg.BaseURL, cfg.CreateTaskPath)
-	raw, err := doPost(url, cfg.APIKey, body, cfg.TimeoutSeconds, cfg.HTTPRetries, cfg.HTTPRetryBackoff)
+	raw, err := doRequest(http.MethodPost, url, cfg.APIKey, body, cfg.TimeoutSeconds, cfg.HTTPRetries, cfg.HTTPRetryBackoff)
 	if err != nil {
 		return "", err
 	}
@@ -125,6 +102,9 @@ func CreateTask(cfg Config, req CreateTaskRequest) (string, error) {
 	}
 	if resp.Code != 200 {
 		return "", fmt.Errorf("API error (code %d): %s", resp.Code, resp.Msg)
+	}
+	if len(resp.Data) == 0 {
+		return "", fmt.Errorf("API returned empty data field")
 	}
 	var data CreateTaskData
 	if err := json.Unmarshal(resp.Data, &data); err != nil {
@@ -142,7 +122,7 @@ func GetTask(cfg Config, taskID string) (*PollData, error) {
 		return nil, fmt.Errorf("KIE_AI_API_KEY is required")
 	}
 	url := buildURL(cfg.BaseURL, cfg.GetTaskPath) + "?taskId=" + taskID
-	raw, err := doGet(url, cfg.APIKey, cfg.TimeoutSeconds, cfg.HTTPRetries, cfg.HTTPRetryBackoff)
+	raw, err := doRequest(http.MethodGet, url, cfg.APIKey, nil, cfg.TimeoutSeconds, cfg.HTTPRetries, cfg.HTTPRetryBackoff)
 	if err != nil {
 		return nil, err
 	}
@@ -152,6 +132,9 @@ func GetTask(cfg Config, taskID string) (*PollData, error) {
 	}
 	if resp.Code != 200 {
 		return nil, fmt.Errorf("API error (code %d): %s", resp.Code, resp.Msg)
+	}
+	if len(resp.Data) == 0 {
+		return nil, fmt.Errorf("API returned empty data field")
 	}
 	var data PollData
 	if err := json.Unmarshal(resp.Data, &data); err != nil {
