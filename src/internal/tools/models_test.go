@@ -27,7 +27,7 @@ func TestListModelsHandler_ReturnsAllModels(t *testing.T) {
 	}
 	require.NoError(t, json.Unmarshal([]byte(text), &resp))
 
-	assert.Len(t, resp.Models, 8)
+	assert.Len(t, resp.Models, len(availableModels))
 
 	ids := make(map[string]bool)
 	for _, m := range resp.Models {
@@ -35,12 +35,12 @@ func TestListModelsHandler_ReturnsAllModels(t *testing.T) {
 		assert.Equal(t, "text-to-image", m.Type)
 	}
 
-	assert.True(t, ids["gpt-image-2-text-to-image"])
-	assert.True(t, ids["gpt-image/1.5-text-to-image"])
-	assert.True(t, ids["nano-banana-2"])
-	assert.True(t, ids["nano-banana-pro"])
-	assert.True(t, ids["qwen/text-to-image"])
-	assert.True(t, ids["qwen2/text-to-image"])
-	assert.True(t, ids["grok-imagine/text-to-image"])
-	assert.True(t, ids["z-image"])
+	assert.Contains(t, ids, "gpt-image-2-text-to-image")
+	assert.Contains(t, ids, "gpt-image/1.5-text-to-image")
+	assert.Contains(t, ids, "nano-banana-2")
+	assert.Contains(t, ids, "nano-banana-pro")
+	assert.Contains(t, ids, "qwen/text-to-image")
+	assert.Contains(t, ids, "qwen2/text-to-image")
+	assert.Contains(t, ids, "grok-imagine/text-to-image")
+	assert.Contains(t, ids, "z-image")
 }
