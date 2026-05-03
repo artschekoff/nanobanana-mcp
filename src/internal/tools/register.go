@@ -15,6 +15,13 @@ func Register(s *server.MCPServer, cfg kieai.Config) {
 	)
 
 	s.AddTool(
+		mcp.NewTool("list_models",
+			mcp.WithDescription("Return the list of available image generation models. Use the returned id as the model parameter in other tools."),
+		),
+		listModelsHandler(),
+	)
+
+	s.AddTool(
 		mcp.NewTool("create_visual_task",
 			mcp.WithDescription("Submit an image generation job to Kie AI. Returns task_id immediately (async). Poll with get_visual_task."),
 			mcp.WithString("style", mcp.Required(), mcp.Description("Visual style description")),

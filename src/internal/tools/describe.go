@@ -19,6 +19,7 @@ func describeHandler(cfg kieai.Config) func(context.Context, mcp.CallToolRequest
 			"async_flow": "submit task → poll get_task until state=success → image in resultUrls[0]",
 			"tools": []string{
 				"describe_imager_interface",
+				"list_models",
 				"create_visual_task",
 				"get_visual_task",
 				"generate_visual",
