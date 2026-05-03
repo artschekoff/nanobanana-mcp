@@ -1,5 +1,5 @@
 ---
-name: nanobanana-mcp
+name: kie-ai-mcp
 description: Generate social media visuals through Kie AI Nano Banana jobs API using an explicit style string passed by the caller plus platform context, then poll task status and save resulting images to disk. Use when asked to create or regenerate post visuals, pass platform-specific requirements (LinkedIn/X/Threads/Instagram/Facebook/Telegram/Reddit), or set up/operate an MCP image generation bridge. Do not read AGENTS.md inside this skill; style must be provided as an input parameter.
 ---
 
