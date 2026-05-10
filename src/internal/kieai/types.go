@@ -10,6 +10,7 @@ import (
 type Config struct {
 	APIKey           string
 	BaseURL          string
+	FileUploadURL    string
 	Model            string
 	TimeoutSeconds   int
 	PollIntervalSec  float64
@@ -26,6 +27,7 @@ func LoadConfig() Config {
 	return Config{
 		APIKey:           os.Getenv("KIE_AI_API_KEY"),
 		BaseURL:          envOr("KIE_AI_BASE_URL", "https://api.kie.ai/api/v1"),
+		FileUploadURL:    envOr("KIE_AI_FILE_UPLOAD_URL", "https://kieai.redpandaai.co"),
 		Model:            envOr("KIE_AI_MODEL", "nano-banana-pro"),
 		TimeoutSeconds:   envInt("KIE_AI_TIMEOUT_SECONDS", 90),
 		PollIntervalSec:  envFloat("KIE_AI_POLL_INTERVAL_SECONDS", 3.0),
@@ -102,4 +104,17 @@ type PollData struct {
 // ResultJSON is the parsed content of PollData.ResultJSON.
 type ResultJSON struct {
 	ResultURLs []string `json:"resultUrls"`
+}
+
+// RemoveBackgroundRequest is the body for POST /jobs/createTask with recraft/remove-background model.
+type RemoveBackgroundRequest struct {
+	Model       string                `json:"model"`
+	CallBackURL string                `json:"callBackUrl,omitempty"`
+	Input       RemoveBackgroundInput `json:"input"`
+}
+
+// RemoveBackgroundInput describes the background removal parameters.
+type RemoveBackgroundInput struct {
+	Image       string `json:"image"`
+	NSFWChecker bool   `json:"nsfw_checker"`
 }
