@@ -66,6 +66,38 @@ func Register(s *server.MCPServer, cfg kieai.Config) {
 	)
 
 	s.AddTool(
+		mcp.NewTool("create_remove_bg_task",
+			mcp.WithDescription("Submit a background removal job to Kie AI. Returns task_id immediately (async). Poll with get_remove_bg_task."),
+			mcp.WithString("image", mcp.Required(), mcp.Description("Image URL or local file path (PNG, JPG, WEBP, max 5MB)")),
+			mcp.WithBoolean("nsfw_checker", mcp.Description("Enable NSFW check (default: true)")),
+			mcp.WithString("callback_url", mcp.Description("Webhook URL for completion")),
+		),
+		createRemoveBgTaskHandler(cfg),
+	)
+
+	s.AddTool(
+		mcp.NewTool("get_remove_bg_task",
+			mcp.WithDescription("Check status of a background removal task. Returns image_url when done."),
+			mcp.WithString("task_id", mcp.Required(), mcp.Description("Task ID from create_remove_bg_task")),
+		),
+		getVisualTaskHandler(cfg),
+	)
+
+	s.AddTool(
+		mcp.NewTool("remove_background",
+			mcp.WithDescription("Remove image background end-to-end: submit, poll, download, save file. Use wait_for_result=false to get task_id and poll manually."),
+			mcp.WithString("image", mcp.Required(), mcp.Description("Image URL or local file path (PNG, JPG, WEBP, max 5MB)")),
+			mcp.WithBoolean("nsfw_checker", mcp.Description("Enable NSFW check (default: true)")),
+			mcp.WithString("output_path", mcp.Description("Output file path or directory")),
+			mcp.WithBoolean("wait_for_result", mcp.Description("Poll until done and save (default: true)")),
+			mcp.WithNumber("poll_interval_seconds", mcp.Description("Seconds between polls (default: 3)")),
+			mcp.WithNumber("poll_timeout_seconds", mcp.Description("Max seconds to wait (default: 300)")),
+			mcp.WithString("callback_url", mcp.Description("Webhook URL for completion")),
+		),
+		removeBackgroundHandler(cfg),
+	)
+
+	s.AddTool(
 		mcp.NewTool("generate_visual_batch",
 			mcp.WithDescription("Generate multiple images in parallel. Each item needs 'prompt' and 'style'."),
 			mcp.WithString("items", mcp.Required(), mcp.Description("JSON array of generation items")),

@@ -5,7 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -141,6 +144,102 @@ func GetTask(cfg Config, taskID string) (*PollData, error) {
 		return nil, fmt.Errorf("parse poll data: %w", err)
 	}
 	return &data, nil
+}
+
+// CreateRemoveBackgroundTask submits a background removal job to Kie AI and returns the task ID.
+func CreateRemoveBackgroundTask(cfg Config, req RemoveBackgroundRequest) (string, error) {
+	if cfg.APIKey == "" {
+		return "", fmt.Errorf("KIE_AI_API_KEY is required")
+	}
+	body, err := json.Marshal(req)
+	if err != nil {
+		return "", err
+	}
+	url := buildURL(cfg.BaseURL, cfg.CreateTaskPath)
+	raw, err := doRequest(http.MethodPost, url, cfg.APIKey, body, cfg.TimeoutSeconds, cfg.HTTPRetries, cfg.HTTPRetryBackoff)
+	if err != nil {
+		return "", err
+	}
+	var resp APIResponse
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		return "", fmt.Errorf("parse response: %w", err)
+	}
+	if resp.Code != 200 {
+		return "", fmt.Errorf("API error (code %d): %s", resp.Code, resp.Msg)
+	}
+	if len(resp.Data) == 0 {
+		return "", fmt.Errorf("API returned empty data field")
+	}
+	var data CreateTaskData
+	if err := json.Unmarshal(resp.Data, &data); err != nil {
+		return "", fmt.Errorf("parse task data: %w", err)
+	}
+	if data.TaskID == "" {
+		return "", fmt.Errorf("no task ID in response")
+	}
+	return data.TaskID, nil
+}
+
+// UploadFile uploads a local file to Kie AI's file upload service and returns the downloadUrl.
+func UploadFile(cfg Config, filePath string) (string, error) {
+	if cfg.APIKey == "" {
+		return "", fmt.Errorf("KIE_AI_API_KEY is required")
+	}
+	f, err := os.Open(filePath)
+	if err != nil {
+		return "", fmt.Errorf("open file: %w", err)
+	}
+	defer f.Close()
+
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	fw, err := mw.CreateFormFile("file", filepath.Base(filePath))
+	if err != nil {
+		return "", fmt.Errorf("create form file: %w", err)
+	}
+	if _, err := io.Copy(fw, f); err != nil {
+		return "", fmt.Errorf("copy file: %w", err)
+	}
+	_ = mw.WriteField("uploadPath", "mcp-uploads")
+	mw.Close()
+
+	url := strings.TrimRight(cfg.FileUploadURL, "/") + "/api/file-stream-upload"
+	client := &http.Client{Timeout: time.Duration(cfg.TimeoutSeconds) * time.Second}
+	req, err := http.NewRequest(http.MethodPost, url, &buf)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Authorization", "Bearer "+cfg.APIKey)
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("upload request: %w", err)
+	}
+	defer resp.Body.Close()
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("read upload response: %w", err)
+	}
+	if resp.StatusCode >= 300 {
+		return "", fmt.Errorf("upload HTTP %d: %s", resp.StatusCode, string(raw))
+	}
+
+	var result struct {
+		Success bool `json:"success"`
+		Code    int  `json:"code"`
+		Data    struct {
+			DownloadURL string `json:"downloadUrl"`
+		} `json:"data"`
+		Msg string `json:"msg"`
+	}
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return "", fmt.Errorf("parse upload response: %w", err)
+	}
+	if !result.Success || result.Data.DownloadURL == "" {
+		return "", fmt.Errorf("upload failed: %s", result.Msg)
+	}
+	return result.Data.DownloadURL, nil
 }
 
 // DownloadImage fetches raw image bytes from a URL.
